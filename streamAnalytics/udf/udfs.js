@@ -1,17 +1,3 @@
-/*
-============================================================================
-JavaScript User-Defined Functions for Stream Analytics
-============================================================================
-
-Register these functions in Azure Stream Analytics:
-1. Go to Stream Analytics Job → Functions
-2. Click "Add" → "JavaScript UDF"
-3. Copy each function below (one at a time)
-4. Save and reference in query
-
-Author: Data Engineering Team
-============================================================================
-*/
 
 // ============================================================================
 // Function 1: Categorize Event
