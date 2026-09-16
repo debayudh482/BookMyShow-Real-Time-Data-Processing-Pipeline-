@@ -1,0 +1,217 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": []
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "225696e1-0713-4d5f-bfc3-ff830b06b781",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Azure Synapse / SQL Server version\nWITH w AS (\n  SELECT *\n  FROM bookymyshow.bookings_fact\n  WHERE booking_time >= DATEADD(day, -7, SYSUTCDATETIME())\n)\nSELECT\n  'Last 7 Days' AS period,\n  COUNT(*) AS total_transactions,\n  SUM(total_amount) AS total_revenue,\n  AVG(total_amount) AS avg_transaction_value,\n  COUNT(DISTINCT customer_id) AS unique_customers,\n  SUM(CASE WHEN payment_status = 'Success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS success_rate_pct,\n\n  SUM(CASE WHEN event_category LIKE '%Music%'  THEN total_amount ELSE 0 END) AS music_revenue,\n  SUM(CASE WHEN event_category LIKE '%Cinema%' THEN total_amount ELSE 0 END) AS cinema_revenue,\n  SUM(CASE WHEN event_category LIKE '%Sports%' THEN total_amount ELSE 0 END) AS sports_revenue,\n\n  SUM(CASE WHEN booking_platform = 'Mobile App' THEN 1 ELSE 0 END) AS mobile_bookings,\n  SUM(CASE WHEN booking_platform = 'Website'   THEN 1 ELSE 0 END) AS website_bookings,\n\n  (SELECT TOP 1 customer_city\n     FROM w\n     WHERE customer_city IS NOT NULL\n     GROUP BY customer_city\n     ORDER BY SUM(total_amount) DESC) AS top_city,\n\n  SUM(CASE WHEN alert_category <> 'Normal' THEN 1 ELSE 0 END) AS anomaly_count,\n  AVG(processing_time_ms) AS avg_processing_time_ms\nFROM w;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "97307e90-32fd-4d8f-808e-0ebaed701cbc",
+      "name": "Microsoft SQL",
+      "credentials": {
+        "microsoftSql": {
+          "id": "sjuVhUm4Q6KyfHBc",
+          "name": "Microsoft SQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json;\nconst n = (v) => Number(v ?? 0);\nconst rup = (v) => `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;\n\n// Compute derived insights\nconst categories = [\n  { name: 'Music',  value: n(row.music_revenue) },\n  { name: 'Cinema', value: n(row.cinema_revenue) },\n  { name: 'Sports', value: n(row.sports_revenue) },\n].sort((a, b) => b.value - a.value);\n\nconst topCategory = categories[0].name;\nconst topPlatform =\n  n(row.mobile_bookings) >= n(row.website_bookings)\n    ? `Mobile App (${((n(row.mobile_bookings) / (n(row.mobile_bookings)+n(row.website_bookings)))*100).toFixed(0)}%)`\n    : `Website (${((n(row.website_bookings) / (n(row.mobile_bookings)+n(row.website_bookings)))*100).toFixed(0)}%)`;\n\nreturn {\n  period: row.period || 'Last 7 Days',\n  generated_at: new Date().toLocaleString('en-IN'),\n  metrics: {\n    total_revenue: rup(row.total_revenue),\n    total_transactions: n(row.total_transactions),\n    avg_transaction_value: rup(row.avg_transaction_value),\n    unique_customers: n(row.unique_customers),\n    success_rate_pct: `${Number(row.success_rate_pct).toFixed(1)}%`,\n    top_city: row.top_city,\n    anomalies: n(row.anomaly_count),\n    avg_processing_time_ms: n(row.avg_processing_time_ms),\n  },\n  highlights: {\n    top_category: `${topCategory} (${rup(categories[0].value)})`,\n    top_platform: topPlatform\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "8818ac3b-b6d8-4496-93d4-9fdeda04bfe3",
+      "name": "Shape Metrics"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You will receive a JSON payload with:\n- period: string (e.g., \"Last 7 Days\")\n- generated_at: human-friendly timestamp\n- metrics: object with keys like:\n  total_revenue, total_transactions, avg_transaction_value, unique_customers,\n  success_rate_pct, top_city, anomaly_count, avg_processing_time_ms,\n  music_revenue, cinema_revenue, sports_revenue, mobile_bookings, website_bookings\n- highlights: optional object (e.g., top_category, top_platform)\n- raw: same keys but not always needed\n\nHere is the JSON payload:\n{{ JSON.stringify($json, null, 2) }}\n\nPlease produce ONE JSON object with fields subject, preheader, html as per the system instructions.\n\nEmail body (html) requirements:\n1) Title: “BookMyShow Weekly Business Report”\n2) Subheader line: “Period: {{ $json.period }}  •  Generated: {{ $json.generated_at }}”\n3) Metrics table (2 columns: Metric | Value). Include at least:\n   - Total Revenue (₹ with two decimals)\n   - Transactions\n   - Unique Customers\n   - Success Rate (%)\n   - Avg Transaction (₹ with two decimals)\n   - Top City\n   - Anomalies\n   - Avg Proc Time (ms)\n4) Section “Revenue by Top Category”. Show each (₹ with two decimals). \n5) Show counts and a brief 1-line takeaway for top platform distribtuion.\n6) Section “Analyst Notes”: 3–4 concise bullet points highlighting what leadership should know (e.g., growth drivers, risks, actions).\n\nStyling:\n- Wrap content in a <div style=\"font-family:Arial,Helvetica,sans-serif;color:#222;max-width:680px;margin:0 auto\">\n- Tables: border-collapse:collapse; borders #eee; td padding 8px; left-aligned labels; right-aligned values\n- Headings with modest margins (e.g., h2 margin:0 0 8px; h3 margin:18px 0 8px)\n- No remote assets, no images, no CSS classes, all inline styles.\n\nOutput JSON, nothing else.\n",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=You are a senior business analyst. Write leadership-ready weekly emails with a crisp, confident tone. ALWAYS return a single JSON object that matches this exact shape:  {   \"subject\": \"string\",   \"preheader\": \"string\",   \"html\": \"string\" }  Rules: - Do NOT include markdown or code fences. No backticks. Return raw JSON only. - Use inline CSS only (no <style> blocks, no remote fonts). - Use a clean two-column table for metrics with subtle borders (#eee) and padding (6–8px). - Format INR money using the Indian grouping style (₹81,857.97 → keep two decimals). - Avoid external images; everything must be plain HTML. - Keep the subject compact and informative (e.g., “BookMyShow Weekly — ₹81,858 revenue, 52 tx”). - Preheader is a short one-liner (will appear in email preview). - Keep the email width comfortable (max 680px). - Do not echo the input JSON."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        672,
+        0
+      ],
+      "id": "7f8801a1-ddd4-4fd1-af53-0a9efed4ab23",
+      "name": "GenerateEmailForLeadership"
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"subject\": {\n      \"type\": \"string\"\n    },\n    \"preheader\": {\n      \"type\": \"string\"\n    },\n    \"html\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"subject\",\n    \"html\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        816,
+        208
+      ],
+      "id": "83e7cb05-412a-436b-95a6-9b094a4ef1bc",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "toRecipients": "=debayudh2021@gmail.com",
+        "subject": "={{ $json.output.subject }}",
+        "bodyContent": "={{ $json.output.html }}",
+        "additionalFields": {
+          "bodyContentType": "html"
+        }
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "b645df52-8463-4b50-bb9b-0894bace0d64",
+      "name": "Send a message",
+      "webhookId": "134ca0c7-60b6-454e-b1ec-87ce63ea2f21",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "dSLR7m8af7Ti2kF4",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        608,
+        208
+      ],
+      "id": "9ed94598-ea1b-4692-b445-3911012e772d",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "iCzXovjgLS9prS89",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Microsoft SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Microsoft SQL": {
+      "main": [
+        [
+          {
+            "node": "Shape Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Metrics": {
+      "main": [
+        [
+          {
+            "node": "GenerateEmailForLeadership",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "GenerateEmailForLeadership",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GenerateEmailForLeadership": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "GenerateEmailForLeadership",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f971fe74-6f59-4883-9877-b87c96632edc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4ed63accbda6a7828b620372f4dc6c52a5e7fe38a12daf4558dfefe31067abe4"
+  },
+  "nodeGroups": [],
+  "id": "V2HlpJY28qhMDOsj",
+  "tags": []
+}
